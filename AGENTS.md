@@ -3,6 +3,23 @@
 This repository is a collection of independent open source projects. The root README
 is the public directory; each project owns its implementation and developer experience.
 
+## Delivery workflow
+
+- Commit and push completed changes directly to `main` by default. Create a pull
+  request only when the user explicitly asks for one; do not wait for a separate
+  merge approval.
+- This repository-specific policy takes precedence over generic PR workflows and
+  PR guidance in contribution documents when working as an agent in this repository.
+- Start from the latest `origin/main` and use an isolated worktree to avoid
+  interference from other terminals. A temporary local branch is fine; publish the
+  completed commits directly to `main` with `git push origin HEAD:main`.
+- Run the checks appropriate to the change before committing. Verify the working
+  branch with `git branch --show-current` before every commit and push, and confirm
+  that the push destination is `main`.
+- If `main` advances before the push, fetch and rebase onto the latest `origin/main`,
+  resolve any conflicts, and rerun affected checks. Never force-push `main`.
+- Finish by reporting the commit, validation results, and any known limitations.
+
 ## Project boundaries
 
 - Put every new project in `projects/<project-name>/`. Use a unique, descriptive,
@@ -63,17 +80,19 @@ is the public directory; each project owns its implementation and developer expe
    root and project-local marketplace entries consistent when both exist.
 7. Validate the project from a clean checkout, starting in its directory. Run its
    documented setup, example, and appropriate checks. Verify the catalog link and
-   README links. State any checks you could not run in the PR.
-8. Open a focused PR describing the project and how it was validated. Complete the
-   PR template and record any required setup or known limitations.
+   README links. State any checks you could not run in the completion message.
+8. Commit and push the project directly to `main` following the delivery workflow
+   above. Report what was added, how it was validated, and any required setup or
+   known limitations.
 
 ## CI and releases
 
 - Project workflows belong in `.github/workflows/<project-name>-<purpose>.yml`, where
   GitHub requires them. Scope triggers to the project's paths and its own workflow;
   set each shell step's working directory to the project folder.
-- Keep workflow permissions minimal. Run checks on pull requests; publish packages
-  only through a deliberately configured release workflow, never on every PR.
+- Keep workflow permissions minimal. Run checks on pushes to `main` and on any
+  explicitly requested pull requests. Publish packages only through a deliberately
+  configured release workflow.
 - Version and release each project independently. Publishing one project must not
   require releasing or changing another.
 
@@ -89,5 +108,3 @@ is the public directory; each project owns its implementation and developer expe
 - Do not move code from another repository unless the task explicitly calls for it.
 - This is a public repository. Keep credentials, private endpoints, customer data,
   and internal-only source out of commits and examples.
-- Work on a fresh branch in an isolated worktree based on current `main`. Check the
-  branch before every commit and push, and finish with a pull request.
