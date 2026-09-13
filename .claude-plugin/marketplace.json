@@ -9,6 +9,16 @@
   },
   "plugins": [
     {
+      "name": "gauntlet",
+      "source": "./projects/gauntlet",
+      "description": "Fable as product owner, Opus 4.6 builders under a hard context cap, a live monitor with a git diff view, and three user gates: before dispatch, before tests, before shipping.",
+      "version": "0.1.26",
+      "author": {
+        "name": "Cosmin Aftanase"
+      },
+      "repository": "https://github.com/cosmin220304/gauntlet"
+    },
+    {
       "name": "light-mcp",
       "source": "./projects/light-mcp/plugins/light-mcp",
       "description": "Connect Claude Code to Light's financial platform via MCP. Query bills, vendors, cards, expenses, and more.",
