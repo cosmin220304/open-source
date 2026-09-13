@@ -1,0 +1,26 @@
+{
+  "name": "light-mcp",
+  "owner": {
+    "name": "Light",
+    "email": "help@light.inc"
+  },
+  "metadata": {
+    "description": "Official Light plugin for Claude Code — connect your AI assistant to Light's financial platform via MCP"
+  },
+  "plugins": [
+    {
+      "name": "light-mcp",
+      "source": "./plugins/light-mcp",
+      "description": "Connect Claude Code to Light's financial platform via MCP. Query bills, vendors, cards, expenses, and more.",
+      "version": "1.0.1",
+      "author": {
+        "name": "Light"
+      },
+      "homepage": "https://light.inc",
+      "repository": "https://github.com/light-space/open-source",
+      "license": "MIT",
+      "keywords": ["finance", "accounting", "mcp", "light", "accounts-payable", "expenses"],
+      "category": "finance"
+    }
+  ]
+}
