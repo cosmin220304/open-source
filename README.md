@@ -23,10 +23,10 @@ Explore a project, build something useful, or contribute one of your own.
       <a href="projects/light-mcp/">Explore the project →</a>
     </td>
     <td width="50%" valign="top">
-      <h3><a href="https://docs.light.inc">Build with Light</a></h3>
-      <p>Explore the Light API and find the documentation for your next integration.</p>
-      <p><sub>Developer resources</sub></p>
-      <a href="https://docs.light.inc">Read the documentation →</a>
+      <h3><a href="projects/gauntlet/">Gauntlet</a></h3>
+      <p>Plan a feature, coordinate Claude Code builders, and review their progress in a local monitor.</p>
+      <p><sub>Claude Code plugin · Experimental</sub></p>
+      <a href="projects/gauntlet/">Explore the project →</a>
     </td>
   </tr>
 </table>
@@ -39,6 +39,7 @@ Choose a project to find its setup instructions and examples.
 <!-- projects:start -->
 | Project | What it does |
 | --- | --- |
+| [Gauntlet](projects/gauntlet/) | Coordinate Claude Code builders with context limits, a local monitor, and three user review gates.<br><sub>Python / Markdown · Experimental</sub> |
 | [Light MCP](projects/light-mcp/) | Connect Claude Code to Light's financial platform via MCP.<br><sub>JSON configuration · Active</sub> |
 <!-- projects:end -->
 
