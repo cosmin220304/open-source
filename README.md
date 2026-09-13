@@ -37,9 +37,9 @@ Each project in this repository has its own folder, documentation, dependencies,
 Choose a project to find its setup instructions and examples.
 
 <!-- projects:start -->
-| Project | What it does | Language | Status |
-| --- | --- | --- | --- |
-| [Light MCP](projects/light-mcp/) | Connect Claude Code to Light's financial platform via MCP. | JSON configuration | Active |
+| Project | What it does |
+| --- | --- |
+| [Light MCP](projects/light-mcp/) | Connect Claude Code to Light's financial platform via MCP.<br><sub>JSON configuration · Active</sub> |
 <!-- projects:end -->
 
 Looking for more? [Browse Light's public repositories →](https://github.com/orgs/light-space/repositories?type=public)

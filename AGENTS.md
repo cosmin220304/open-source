@@ -48,12 +48,13 @@ is the public directory; each project owns its implementation and developer expe
    keep rows alphabetical by name:
 
    ```markdown
-   | Project | What it does | Language | Status |
-   | --- | --- | --- | --- |
-   | [Project name](projects/project-name/) | One sentence describing its purpose. | TypeScript | Experimental |
+   | Project | What it does |
+   | --- | --- |
+   | [Project name](projects/project-name/) | One sentence describing its purpose.<br><sub>TypeScript · Experimental</sub> |
    ```
 
-   Link directly to the project folder. Use `Experimental`, `Active`, or `Archived`
+   Link directly to the project folder. Include language and status beneath the
+   description to keep the table readable on narrow screens. Use `Experimental`, `Active`, or `Archived`
    consistently with its README. Give each project its own row and description;
    never combine unrelated projects in one entry. The Featured section is curated
    separately and must distinguish external repositories from projects hosted here.
