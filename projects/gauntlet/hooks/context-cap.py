@@ -2,7 +2,7 @@
 """PreToolUse hook: blocks a gauntlet subagent's next tool call once its context passes the cap."""
 import json, os, sys
 
-CAP = int(os.environ.get("GAUNTLET_CONTEXT_CAP", "130000"))
+CAP = int(os.environ.get("GAUNTLET_CONTEXT_CAP", "300000"))
 
 hook = json.load(sys.stdin)
 if "gauntlet-" not in str(hook.get("agent_type", "")):

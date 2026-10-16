@@ -1,6 +1,6 @@
 # Gauntlet
 
-Fable plans and reviews. Opus 4.6 builds. You decide at three gates.
+Fable plans and reviews. Opus 5.5 builds. You decide at three gates.
 
 | | |
 | --- | --- |
@@ -10,7 +10,7 @@ Fable plans and reviews. Opus 4.6 builds. You decide at three gates.
 | Language | Python / Markdown |
 | License | [Not specified upstream](LICENSE) |
 
-`/gauntlet:run <spec or ticket>` turns Fable into the product owner for one feature in the current worktree. It writes a brief that says what and why, splits the work only where a second engineer could take a part without stepping on the first, and spawns one `gauntlet-builder` per slice. Builders run on `claude-opus-4-6`. They explore the code, choose their own files, names and steps, write their own tests, and never run them. Fable never tells a builder how to build. A hook stops any builder that crosses 130k tokens of context and makes it hand off. Fable checks every diff for business sense, runs the tests itself, and ships through `/gauntlet:ship-it`.
+`/gauntlet:run <spec or ticket>` turns Fable into the product owner for one feature in the current worktree. It writes a brief that says what and why, splits the work only where a second engineer could take a part without stepping on the first, and spawns one `gauntlet-builder` per slice. Builders run on `claude-opus-5-5`. They explore the code, choose their own files, names and steps, write their own tests, and never run them. Fable never tells a builder how to build. A hook stops any builder that crosses 300k tokens of context and makes it hand off. Fable checks every diff for business sense, runs the tests itself, and ships through `/gauntlet:ship-it`.
 
 The run stops to ask you three times:
 
@@ -22,7 +22,7 @@ A monitor at http://localhost:7777 shows every session and builder on this machi
 
 ## Install
 
-You need Claude Code with access to `claude-opus-4-6`, `python3`, `git`, and `gh` for shipping.
+You need Claude Code with access to `claude-opus-5-5`, `python3`, `git`, and `gh` for shipping.
 
 Inside Claude Code:
 
@@ -58,7 +58,7 @@ If the monitor is not up, or you want this session diffed against another checko
 
 ## Knobs
 
-- `GAUNTLET_CONTEXT_CAP` (default `130000`): the builder context cap, read by the hook and the monitor.
+- `GAUNTLET_CONTEXT_CAP` (default `300000`): the builder context cap, read by the hook and the monitor.
 - `agents/gauntlet-builder.md`: the builder's model, turn limit, and working rules.
 - `commands/ship-it.md`: how a run becomes a PR. Edit the commit and PR conventions there.
 
