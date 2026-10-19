@@ -18,7 +18,7 @@ The run stops to ask you three times:
 2. After the builders report: does the code look right, and may it run validation and the tests.
 3. With everything green: ship it?
 
-A monitor at http://localhost:7777 shows every session and builder on this machine. The Chat tab shows each run as a group chat: the lead session and every builder get a name and an avatar, their messages appear as chat bubbles, a typing indicator shows what each one is doing, and a summary card lists every member's state. You still reply in the terminal. The Tasks and Changes tabs show what each one is doing right now, its context against the cap, how it ended (report, stopped, cap hit, compacted), and the uncommitted diff of its worktree, one file at a time.
+A monitor at http://localhost:7777 shows the runs on this machine as a chat app. Each checkout is one chat. The lead session and every builder are people in it, with a name and an avatar. Their messages appear as bubbles, typing dots show what each one is doing right now, and a pinned line says who works, who needs review, and whose turn it is. The chat list marks unread messages and runs that wait for you. Group info lists the members; open one to see its context against the cap, how it ended (report, stopped, cap hit, compacted), its final report and its recent activity. **Changes** opens the uncommitted diff of the checkout, one file at a time. You still reply in the terminal.
 
 ## Install
 
@@ -52,7 +52,7 @@ independently. Choose one installation source so the plugin is not enabled twice
 
 Answer the three gates. Fixes you ask for at gate 2 become new builder slices and come back to the same gate.
 
-The first run starts the monitor if nothing is listening on port 7777 and registers the session with its checkout; open http://localhost:7777. It shows the latest registered run of each checkout, grouped by checkout, and diffs that checkout, so a run started on main that moves into a worktree shows that worktree. It reads local transcripts under `~/.claude/projects` and sends nothing anywhere. The Changes tab loads its diff viewer from a CDN, so it needs internet access in the browser.
+The first run starts the monitor if nothing is listening on port 7777 and registers the session with its checkout; open http://localhost:7777. It shows the latest registered run of each checkout, grouped by checkout, and diffs that checkout, so a run started on main that moves into a worktree shows that worktree. It reads local transcripts under `~/.claude/projects` and sends nothing anywhere. The Changes view loads its diff viewer from a CDN, so it needs internet access in the browser.
 
 If the monitor is not up, or you want this session diffed against another checkout, run `/gauntlet:monitor` or `/gauntlet:monitor /path/to/worktree`. It starts the monitor if needed, registers the session, and opens the page.
 
@@ -108,7 +108,7 @@ validate the repository-root marketplace. Keep this project's runtime files here
 Copied from [cosmin220304/gauntlet](https://github.com/cosmin220304/gauntlet) at
 commit [`1f5c5e9`](https://github.com/cosmin220304/gauntlet/commit/1f5c5e99b4e6fd6825a91f4cdeb9440387837ba4),
 version `0.1.26`. This copy moves builders to Opus 5.5 with a 300k context cap and adds
-the Chat tab to the monitor (version `0.1.27`). This README adapts installation paths and adds project
+a chat-style monitor (version `0.1.27`). This README adapts installation paths and adds project
 metadata, development instructions, and attribution. The local example uses
 Claude Code's normal permission handling.
 
