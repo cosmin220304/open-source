@@ -295,6 +295,100 @@ def forget(cwd):
         if run.get("cwd") == cwd: os.remove(rp)
 
 
+CHAT_CACHE = {}
+MAX_MSG = 12000
+SID_RE = re.compile(r"^[0-9a-f-]{36}$")
+# Members get a name in start order inside a run, so each keeps its name across refreshes.
+NAMES = [("Ada", "🦊"), ("Linus", "🐧"), ("Grace", "🦉"), ("Alan", "🐙"), ("Margaret", "🚀"), ("Dennis", "🐢"), ("Barbara", "🦄"),
+         ("Ken", "🐳"), ("Frances", "🐝"), ("Edsger", "🦔"), ("Radia", "🌵"), ("Guido", "🐍"), ("Hedy", "🦩"), ("Niklaus", "🦬")]
+DOING = {"Edit": "editing", "Write": "writing", "MultiEdit": "editing", "Read": "reading", "Bash": "running", "Grep": "searching",
+         "Glob": "searching", "Agent": "briefing", "WebFetch": "reading", "WebSearch": "searching", "compact": "compacting"}
+STATUS_WORD = {"DONE": "finished", "PASS": "passed", "FAILED": "failed", "FAIL": "failed", "BLOCKED": "is blocked", "STOPPED": "was stopped",
+               "HANDOFF": "handed off", "NOREPORT": "ended without a report", "ENDED": "ended"}
+
+
+def said(c):
+    """What a person typed: '' for tool results, reminders and command output."""
+    if isinstance(c, list):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c): return ""
+        c = "\n".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+    if not isinstance(c, str): return ""
+    cmd = CMD_RE.search(c)
+    if cmd: return (cmd.group(1).strip() + " " + " ".join((cmd.group(2) or "").split())).strip()
+    return TAG_RE.sub("", c).strip()
+
+
+def chat_lines(path, side):
+    """Messages of one transcript, [{t, from: 'in'|'out'|'note', text}], and its model. 'in' is a prompt it got, 'out' a reply."""
+    key = (path, os.path.getsize(path))
+    if key in CHAT_CACHE: return CHAT_CACHE[key]
+    out, model = [], ""
+    with open(path) as f:
+        for line in f:
+            if '"type":"user"' not in line and '"type":"text"' not in line and '"compact_boundary"' not in line: continue
+            try: d = json.loads(line)
+            except ValueError: continue
+            if (d.get("isSidechain") and not side) or d.get("isMeta") or d.get("isCompactSummary"): continue
+            m, iso = d.get("message", {}), d.get("timestamp", "")
+            if d.get("type") == "system" and d.get("subtype") == "compact_boundary":
+                out.append({"t": iso, "from": "note", "text": "context compacted · " + compact_event(d)["v"]})
+            elif d.get("type") == "user":
+                text = said(m.get("content"))
+                if text == "[Request interrupted by user]": out.append({"t": iso, "from": "note", "text": "interrupted"})
+                elif text: out.append({"t": iso, "from": "in", "text": text[:MAX_MSG]})
+            elif d.get("type") == "assistant":
+                model = m.get("model") or model
+                c = m.get("content") if isinstance(m.get("content"), list) else []
+                text = "\n\n".join(b["text"].strip() for b in c if b.get("type") == "text" and b.get("text", "").strip())
+                if text: out.append({"t": iso, "from": "out", "text": text[:MAX_MSG]})
+    if len(CHAT_CACHE) > 64: CHAT_CACHE.clear()
+    CHAT_CACHE[key] = (out, model)
+    return out, model
+
+
+def lead_name(model):
+    return next((k.capitalize() for k in ("fable", "opus", "sonnet", "haiku") if k in model), "Lead")
+
+
+def doing(running, ev):
+    cur = ev[-1] if ev else None
+    return f"{DOING.get(cur['k'], 'using ' + cur['k'])} {cur['v'][:80]}".strip() if running and cur and cur["k"] != "text" else ""
+
+
+def chat(sid):
+    """One run as a group chat: you, the lead session, and one named member per subagent."""
+    paths = glob.glob(f"{ROOT}/*/{sid}.jsonl") if SID_RE.match(sid) else []
+    if not paths: return {"error": "no transcript for this session"}
+    main = session_tail(paths[0])
+    lines, model = chat_lines(paths[0], False)
+    tasks = {}
+    for tp in glob.glob(f"{ROOT}/*/{sid}/subagents/agent-*.jsonl"):
+        t = parse_task(tp); t["path"] = tp
+        if t["id"] not in tasks or t["mtime"] > tasks[t["id"]]["mtime"]: tasks[t["id"]] = t
+    tasks = sorted(tasks.values(), key=lambda t: t["started"])
+    members = [{"id": "main", "name": lead_name(model), "avatar": "🧭", "role": "lead" + (f" · {model}" if model else ""),
+                "running": main["running"], "status": "", "reason": "", "context": main["context"],
+                "doing": doing(main["running"], main["events"]), "summary": main["summary"]}]
+    msgs = [{"t": l["t"], "from": {"in": "you", "out": "main"}.get(l["from"], "note"), "text": l["text"]} for l in lines]
+    for i, t in enumerate(tasks):
+        name, avatar = NAMES[i % len(NAMES)]
+        if i >= len(NAMES): name += f" {i // len(NAMES) + 1}"
+        members.append({"id": t["id"], "name": name, "avatar": avatar, "role": t["name"] + (f" · {t['type']}" if t["type"] else ""),
+                        "running": t["running"], "status": t["status"], "reason": t["reason"], "context": t["context"],
+                        "doing": doing(t["running"], t["events"]),
+                        "summary": "" if t["running"] else (t["last_text"].strip().splitlines() or [""])[0][:300]})
+        tl, _ = chat_lines(t["path"], True)
+        for j, l in enumerate(tl):
+            if l["from"] == "out": msgs.append({"t": l["t"], "from": t["id"], "text": l["text"]})
+            elif l["from"] == "note": msgs.append({"t": l["t"], "from": "note", "about": t["id"], "text": f"{name}: {l['text']}"})
+            elif j == 0: msgs.append({"t": l["t"], "from": "main", "to": t["id"], "text": l["text"]})
+        if not t["running"]:
+            msgs.append({"t": t["ended"], "from": "note", "about": t["id"],
+                         "text": f"{name} {STATUS_WORD.get(t['status'], t['status'].lower())}" + (f" · {t['reason']}" if t["reason"] else "")})
+    msgs.sort(key=lambda m: m["t"] or "")
+    return {"id": sid, "cap": CAP, "members": members, "messages": msgs[-600:]}
+
+
 def snapshot():
     """Registered gauntlet runs, the latest one per checkout, grouped by checkout."""
     now = time.time()
@@ -521,6 +615,66 @@ tr.detail td{background:var(--raise);padding:12px 16px 14px}
 .tl{margin:0;padding:0;list-style:none;font-family:var(--mono);font-size:12.5px;line-height:1.6}
 .tl li{display:grid;grid-template-columns:64px 76px 1fr;gap:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tl .t{color:var(--ink-3)}.tl b{color:var(--tool)}.tl .said b{color:var(--ink-3)}.tl .said span{white-space:normal;color:var(--ink-2)}
+/* chat */
+main.chat{display:flex;flex-direction:column;overflow:hidden;padding-bottom:0}
+main.chat .top,main.chat .views{flex:none}
+.wa{--wa-bg:#0b141a;--wa-in:#202c33;--wa-out:#005c4b;--wa-ink-2:#8696a0;display:grid;grid-template-columns:270px minmax(0,1fr);flex:1;min-height:0;margin:12px 0 0;border:1px solid var(--line);border-radius:10px 10px 0 0;overflow:hidden}
+.ppl{min-width:0;background:var(--panel);border-right:1px solid var(--line);overflow-y:auto}
+.pp{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:2px 10px;width:100%;padding:9px 12px;border-bottom:1px solid var(--line);align-items:center}
+.pp:hover{background:var(--raise)}
+.pp[aria-current=true]{background:var(--raise);box-shadow:inset 2px 0 var(--run)}
+.av{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font-size:20px;background:var(--raise);border:1px solid var(--line-2);grid-row:span 2;position:relative}
+.av.on::after{content:"";position:absolute;right:-1px;bottom:-1px;width:11px;height:11px;border-radius:50%;background:var(--run);border:2px solid var(--panel)}
+.av.sm{width:28px;height:28px;font-size:15px;grid-row:auto}
+.pp .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pp .tm{font-size:11.5px;color:var(--ink-3)}
+.pp .pv{grid-column:2/4;font-size:12.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pp .pv.ty{color:var(--run)}
+.cv{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--wa-bg)}
+.cv-h{display:flex;gap:10px;align-items:center;padding:9px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex:none}
+.cv-h .nm{font-weight:600}
+.cv-h .sub{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cv-h .sub.ty{color:var(--run)}
+.cv-h .meter{margin-left:auto;flex:none;width:200px}
+.sum{margin:10px 16px 0;padding:9px 13px;border:1px solid var(--line-2);border-radius:8px;background:var(--panel);font-size:13px;flex:none;max-height:22vh;overflow:auto}
+.sum b{display:block;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--tool);margin-bottom:3px}
+.sum ul{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:minmax(0,1fr);gap:3px}
+.sum li{display:flex;gap:8px;align-items:baseline;min-width:0}
+.sum li span:last-child{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.sum .pill{min-width:0;font-size:10px;padding:0 5px;flex:none}
+.sum .sn{font-weight:600;flex:none}
+.sum .rc{margin:0 0 6px;color:var(--ink)}
+.msgs{flex:1;overflow-y:auto;padding:12px 16px 18px;display:flex;flex-direction:column;gap:3px}
+.day{align-self:center;margin:10px 0 6px;padding:3px 10px;border-radius:6px;background:var(--wa-in);color:var(--wa-ink-2);font-size:11.5px}
+.note{align-self:center;margin:6px 0;padding:3px 10px;border-radius:6px;background:#182229;color:var(--wa-ink-2);font-size:12px;max-width:80%;text-align:center}
+.bub{position:relative;max-width:min(78%,760px);padding:6px 9px 18px;border-radius:8px;background:var(--wa-in);align-self:flex-start;overflow-wrap:anywhere;font-size:13.5px;line-height:1.45;margin-top:2px}
+.bub.first{margin-top:8px;border-top-left-radius:0}
+.bub.me{align-self:flex-end;background:var(--wa-out)}
+.bub.me.first{border-top-left-radius:8px;border-top-right-radius:0}
+.bub .who{display:block;font-size:12.5px;font-weight:600;margin-bottom:2px}
+.bub .who span{font-weight:400;color:var(--wa-ink-2)}
+.bub .tt{position:absolute;right:8px;bottom:3px;font-size:10.5px;color:var(--wa-ink-2)}
+.bub p{margin:0 0 6px}.bub p:last-child{margin:0}
+.bub code{font-family:var(--mono);font-size:12px;background:rgba(0,0,0,.25);padding:0 4px;border-radius:3px}
+.bub pre{font-family:var(--mono);font-size:12px;background:rgba(0,0,0,.3);padding:8px;border-radius:5px;overflow-x:auto;margin:4px 0 6px;white-space:pre}
+.bub pre code{background:none;padding:0}
+.bub ul{margin:0 0 6px;padding-left:18px}
+.bub details summary{cursor:pointer;color:var(--wa-ink-2);font-size:12.5px}
+.bub.long .body{max-height:260px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 75%,transparent)}
+.bub.long.open .body{max-height:none;-webkit-mask-image:none}
+.bub .more{color:var(--tool);font-size:12.5px;margin-top:2px}
+.typing{align-self:flex-start;margin-top:8px;padding:7px 11px;border-radius:8px;background:var(--wa-in);font-size:12.5px;color:var(--wa-ink-2);display:flex;gap:8px;align-items:center;max-width:78%}
+.typing i{display:inline-flex;gap:3px}.typing i b{width:5px;height:5px;border-radius:50%;background:var(--wa-ink-2);animation:blink 1.2s infinite}
+.typing i b:nth-child(2){animation-delay:.2s}.typing i b:nth-child(3){animation-delay:.4s}
+.typing span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+@keyframes blink{0%,60%,100%{opacity:.3}30%{opacity:1}}
+.cmp{flex:none;display:flex;gap:10px;align-items:center;padding:9px 16px;background:var(--panel);border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-3)}
+.cmp .box{flex:1;padding:7px 12px;border-radius:18px;background:var(--raise);border:1px solid var(--line-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmp button{padding:5px 10px;border-radius:6px;border:1px solid var(--line-2);color:var(--ink-2);flex:none}
+.cmp button:hover{color:var(--ink);background:var(--raise)}
+.ch-empty{color:var(--wa-ink-2);margin:auto;text-align:center;max-width:44ch}
+@media (max-width:820px){.wa{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr}.ppl{display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}.pp{width:auto;min-width:180px;border-bottom:0;border-right:1px solid var(--line)}.cv-h .meter{display:none}}
+@media (prefers-reduced-motion:reduce){.typing i b{animation:none}}
 @media (max-width:820px){body{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr}nav{border-right:0;border-bottom:1px solid var(--line);max-height:40vh}main{padding:16px}#grip{display:none}}
 @media (prefers-reduced-motion:reduce){.pulse::after{animation:none}.bar i{transition:none}}
 </style>
@@ -534,7 +688,7 @@ tr.detail td{background:var(--raise);padding:12px 16px 14px}
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const open=new Set(), tab={}; let sel=location.hash.slice(1)||null, data=null;
-let view=new URLSearchParams(location.search).get('view')||'tasks', diffMode='split', diffKey='', diffCache=null, diffCwd='', diffSel=new URLSearchParams(location.search).get('file')||'', diffFull=false;
+let view=new URLSearchParams(location.search).get('view')||'chat', diffMode='split', diffKey='', diffCache=null, diffCwd='', diffSel=new URLSearchParams(location.search).get('file')||'', diffFull=false;
 // Test files: test/spec dirs, foo.test.ts / foo_spec.rb / test_foo.py, FooTest.kt / FooTests.swift / foo_test.go.
 const TEST=/(^|\/)(__)?(tests?|specs?)(__)?\/|[._](test|spec)s?\.\w+$|(^|\/)test_[^/]*$|Tests?\.\w+$/;
 let hideTests=(()=>{try{return localStorage.getItem('hideTests')==='1'}catch(e){return false}})();
@@ -618,8 +772,15 @@ function render(d){
   let h=`<div class=top><h2>${esc(s.title)}</h2><span class=meta title="${esc(s.wt)}"><b>${esc(s.repo)}</b>${s.worktree?` / <span class=br>${esc(s.worktree)}</span>`:''} · ${s.branch&&s.branch!=='HEAD'?`<span class=br>${esc(s.branch)}</span> · `:''}${when(s.started)}</span></div>`;
   if(s.job) h+=`<div class=job><span class=st>${esc(s.job.state)}</span><span class=d>${esc(s.job.detail||'')}</span><span class=tk>bg ${esc(s.job.id)} · ${fmtK(s.job.tokens)} tok</span></div>`;
   const nfiles=diffCache&&diffCwd===s.cwd&&!diffCache.error?shown().length:null;
-  h+=`<div class=views role=tablist><button role=tab data-view=tasks aria-selected="${view==='tasks'}" tabindex="${view==='tasks'?0:-1}">Tasks<span>${s.tasks.length}</span></button><button role=tab data-view=changes aria-selected="${view==='changes'}" tabindex="${view==='changes'?0:-1}">Changes${nfiles!==null?`<span>${nfiles}</span>`:''}</button></div>`;
+  h+=`<div class=views role=tablist><button role=tab data-view=chat aria-selected="${view==='chat'}" tabindex="${view==='chat'?0:-1}">Chat<span>${s.tasks.length+2}</span></button><button role=tab data-view=tasks aria-selected="${view==='tasks'}" tabindex="${view==='tasks'?0:-1}">Tasks<span>${s.tasks.length}</span></button><button role=tab data-view=changes aria-selected="${view==='changes'}" tabindex="${view==='changes'?0:-1}">Changes${nfiles!==null?`<span>${nfiles}</span>`:''}</button></div>`;
   $('#main').classList.toggle('changes',view==='changes');
+  $('#main').classList.toggle('chat',view==='chat');
+  if(view==='chat'){
+    if(chatSid!==s.id){chatSid=s.id;chatData=null;chatRaw='';who='all';loadChat();}
+    if($('#wa')?.dataset.sid===s.id){paintChat();return;}
+    h+=`<div class=wa id=wa data-sid="${esc(s.id)}"><aside class=ppl id=ppl aria-label="members"></aside><section class=cv id=cv></section></div>`;
+    $('#main').innerHTML=h; paintChat(true); return;
+  }
   if(view==='changes'){
     if(diffCwd!==s.cwd){diffCwd=s.cwd;diffCache=null;diffKey='';unmountDiff();loadDiff();}
     if(diffBox&&document.contains(diffBox)){paintDiff();return;}
@@ -637,6 +798,62 @@ function render(d){
   $('#main').innerHTML=h;
 }
 
+// Chat view: the run as a group chat. Members talk in bubbles; you answer in the terminal.
+let chatSid='', chatData=null, chatRaw='', who='all';
+const opened=new Set();
+const NAMECOL=['#53bdeb','#f15c6d','#ffd279','#a5b337','#fc9775','#25d366','#c79ecf','#ff72a1'];
+const fmt=s=>esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+// Paragraphs; runs of "- " lines inside a paragraph become a list.
+const BUL=/^\s*[-*] /;
+const paras=t=>t.trim().split(/\n{2,}/).filter(Boolean).map(p=>p.split('\n').reduce((g,l)=>{const b=BUL.test(l),last=g[g.length-1];if(last&&last.b===b)last.ls.push(l);else g.push({b,ls:[l]});return g},[])
+  .map(g=>g.b?'<ul>'+g.ls.map(l=>`<li>${fmt(l.replace(BUL,''))}</li>`).join('')+'</ul>':'<p>'+g.ls.map(fmt).join('<br>')+'</p>').join('')).join('');
+// Small markdown: fenced code, bullets, inline code, bold. Odd parts of the split are code.
+const md=t=>t.split(/```[^\n]*\n?([\s\S]*?)```/g).map((p,i)=>i%2?`<pre><code>${esc(p.replace(/\n$/,''))}</code></pre>`:paras(p)).join('');
+async function loadChat(){
+  const sid=chatSid; if(!sid)return;
+  try{const t=await (await fetch('/chat?id='+encodeURIComponent(sid))).text();
+    if(sid!==chatSid||t===chatRaw)return; chatRaw=t; chatData=JSON.parse(t); if(view==='chat')paintChat();
+  }catch(e){}
+}
+function paintChat(jump){
+  const ppl=$('#ppl'), cv=$('#cv'), c=chatData; if(!ppl||!cv)return;
+  if(!c){cv.innerHTML='<div class=ch-empty>loading chat…</div>';return;}
+  if(c.error){ppl.innerHTML='';cv.innerHTML=`<div class=ch-empty>${esc(c.error)}</div>`;return;}
+  const by=Object.fromEntries(c.members.map((m,i)=>[m.id,{...m,col:NAMECOL[i%NAMECOL.length]}]));
+  if(who!=='all'&&!by[who]) who='all';
+  const mine=(id,m)=>id==='all'||(id==='main'?m.from==='you'||(m.from==='main'&&!m.to)||(m.from==='note'&&!m.about):m.from===id||m.to===id||m.about===id);
+  const lastOf=id=>{for(let i=c.messages.length-1;i>=0;i--){const m=c.messages[i];if(m.from!=='note'&&mine(id,m))return m;}return null};
+  const prev=m=>!m?'':(m.from==='you'?'You: ':by[m.from]?by[m.from].name+': ':'')+m.text.replace(/\s+/g,' ').slice(0,120);
+  const busy=c.members.filter(m=>m.running);
+  const row=(id,av,name,on,line,t)=>`<button class=pp data-who="${esc(id)}" aria-current="${who===id}"><span class="av ${on?'on':''}">${av}</span><span class=nm>${esc(name)}</span><span class=tm>${when(t)}</span><span class="pv ${on?'ty':''}">${esc(line)}</span></button>`;
+  const la=lastOf('all');
+  let p=row('all','👥','Everyone',busy.length,busy.length?busy.map(m=>m.name).join(', ')+' typing…':prev(la),la&&la.t);
+  for(const m of Object.values(by)){const l=lastOf(m.id);p+=row(m.id,m.avatar,m.name,m.running,m.running?(m.doing||'typing…'):m.reason||prev(l),l&&l.t);}
+  if(ppl.dataset.k!==p){ppl.dataset.k=p;ppl.innerHTML=p;}
+  const me=by[who], list=c.messages.filter(m=>mine(who,m));
+  const pct=me?Math.min(100,me.context/(me.id==='main'?1e6:c.cap)*100):0;
+  let h=`<div class=cv-h><span class="av sm">${me?me.avatar:'👥'}</span><div style="min-width:0"><div class=nm>${esc(me?me.name:'Everyone')}</div><div class="sub ${me&&me.running?'ty':''}">${esc(me?(me.running?'typing… '+me.doing:me.role):['You',...c.members.map(m=>m.name)].join(', '))}</div></div>${me?`<div class=meter title="context"><span>${fmtK(me.context)} <span class=c>/ ${fmtK(me.id==='main'?1e6:c.cap)}</span></span><div class=bar><i class="${pct>95?'bad':pct>75?'warn':''}" style="transform:scaleX(${pct/100})"></i></div></div>`:''}</div>`;
+  // Summary: the lead's recap plus one line per member, or one member's state.
+  const line=m=>`<li><span class="pill ${esc(m.running?'':m.status)}">${esc(m.running?'WORKING':m.status==='NOREPORT'?'NO REPORT':m.status||'IDLE')}</span><span class=sn style="color:${m.col}">${esc(m.name)}</span><span>${esc(m.running?m.doing||'typing…':m.reason||m.summary||m.role)}</span></li>`;
+  const recap=by.main.summary?`<p class=rc>${esc(by.main.summary)}</p>`:'';
+  h+=`<div class=sum><b>Summary</b>${me?(me.id==='main'?recap:'')+`<ul>${line(me)}</ul>`:recap+`<ul>${Object.values(by).map(line).join('')}</ul>`}</div>`;
+  let body='', lastKey='', lastDay='';
+  for(const m of list){
+    const day=m.t?new Date(m.t).toDateString():'';
+    if(day&&day!==lastDay){lastDay=day;lastKey='';body+=`<div class=day>${day===new Date().toDateString()?'Today':new Date(m.t).toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'})}</div>`;}
+    if(m.from==='note'){lastKey='';body+=`<div class=note>${esc(m.text)}</div>`;continue;}
+    const key=m.from+'>'+(m.to||''), first=key!==lastKey; lastKey=key;
+    const f=by[m.from], to=m.to&&by[m.to], id=m.t+key, long=m.text.length>900||m.text.split('\n').length>16;
+    const label=m.from==='you'||!first?'':`<span class=who style="color:${f?f.col:'var(--ink-2)'}">${esc(f?f.name:m.from)}${to?` <span>→ ${esc(to.name)} · ${esc(to.role.split(' · ')[0])}</span>`:''}</span>`;
+    body+=`<div class="bub ${m.from==='you'?'me':''} ${first?'first':''} ${long?'long':''} ${opened.has(id)?'open':''}">${label}<div class=body>${md(m.text)}</div>${long?`<button class=more data-more="${esc(id)}">${opened.has(id)?'Show less':'Read more'}</button>`:''}<span class=tt>${hhmm(m.t)}</span></div>`;
+  }
+  if(!list.length) body+=`<div class=ch-empty>No messages yet.</div>`;
+  for(const m of Object.values(by)) if(m.running&&(who==='all'||who===m.id)) body+=`<div class=typing><span class="av sm">${m.avatar}</span><i><b></b><b></b><b></b></i><span>${esc(m.name)}${m.doing?' · '+esc(m.doing):''}</span></div>`;
+  const old=$('#msgs'), stick=jump||!old||old.dataset.who!==who||old.scrollHeight-old.scrollTop-old.clientHeight<80, top=old?old.scrollTop:0;
+  if(cv.dataset.k===h+body+who)return; cv.dataset.k=h+body+who;
+  cv.innerHTML=h+`<div class=msgs id=msgs data-who="${esc(who)}" role=log aria-label="messages">${body}</div><div class=cmp><span class=box>Reply in the terminal that runs this session. This page only reads.</span></div>`;
+  const nw=$('#msgs'); nw.scrollTop=stick?nw.scrollHeight:top;
+}
 async function loadDiff(){
   if(!diffCwd)return;
   try{const r=await (await fetch('/diff?cwd='+encodeURIComponent(diffCwd))).json();
@@ -706,6 +923,8 @@ function paintDiff(){
 }
 document.addEventListener('click',e=>{
   const rm=e.target.closest('[data-rm]'); if(rm){e.preventDefault();fetch('/forget?cwd='+encodeURIComponent(rm.dataset.rm),{method:'POST',headers:{'X-Gauntlet':'1'}}).then(tick);return;}
+  const pp=e.target.closest('.pp[data-who]'); if(pp){who=pp.dataset.who;paintChat(true);return;}
+  const mo=e.target.closest('[data-more]'); if(mo){opened.has(mo.dataset.more)?opened.delete(mo.dataset.more):opened.add(mo.dataset.more);paintChat();return;}
   const v=e.target.closest('.views [data-view]'); if(v){view=v.dataset.view;if(view!=='changes')unmountDiff();render(data);return;}
   const md=e.target.closest('.chg-head [data-mode]'); if(md){diffMode=diffMode==='split'?'unified':'split';paintDiff();return;}
   if(e.target.closest('.chg-head [data-viewed]')){showViewed=!showViewed;paintDiff();return;}
@@ -755,7 +974,7 @@ async function tick(){
   seen=now;
   keep(()=>render(data));
 }
-tick();setInterval(tick,2000);setInterval(()=>{if(view==='changes')loadDiff();},4000);
+tick();setInterval(tick,2000);setInterval(()=>{if(view==='changes')loadDiff();if(view==='chat')loadChat();},2500);
 </script>"""
 
 
@@ -765,6 +984,8 @@ class H(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/api":
             body = json.dumps(snapshot()).encode(); ctype = "application/json"
+        elif u.path == "/chat":
+            body = json.dumps(chat(parse_qs(u.query).get("id", [""])[0])).encode(); ctype = "application/json"
         elif u.path == "/diff":
             body = json.dumps(changes(parse_qs(u.query).get("cwd", [""])[0])).encode(); ctype = "application/json"
         else:

@@ -18,7 +18,7 @@ The run stops to ask you three times:
 2. After the builders report: does the code look right, and may it run validation and the tests.
 3. With everything green: ship it?
 
-A monitor at http://localhost:7777 shows every session and builder on this machine: what each one is doing right now, its context against the cap, how it ended (report, stopped, cap hit, compacted), and the uncommitted diff of its worktree, one file at a time.
+A monitor at http://localhost:7777 shows every session and builder on this machine. The Chat tab shows each run as a group chat: the lead session and every builder get a name and an avatar, their messages appear as chat bubbles, a typing indicator shows what each one is doing, and a summary card lists every member's state. You still reply in the terminal. The Tasks and Changes tabs show what each one is doing right now, its context against the cap, how it ended (report, stopped, cap hit, compacted), and the uncommitted diff of its worktree, one file at a time.
 
 ## Install
 
@@ -107,8 +107,8 @@ validate the repository-root marketplace. Keep this project's runtime files here
 
 Copied from [cosmin220304/gauntlet](https://github.com/cosmin220304/gauntlet) at
 commit [`1f5c5e9`](https://github.com/cosmin220304/gauntlet/commit/1f5c5e99b4e6fd6825a91f4cdeb9440387837ba4),
-version `0.1.26`. The plugin manifests, agents, commands, hooks, skills, and output
-style are copied unchanged. This README adapts installation paths and adds project
+version `0.1.26`. This copy moves builders to Opus 5.5 with a 300k context cap and adds
+the Chat tab to the monitor (version `0.1.27`). This README adapts installation paths and adds project
 metadata, development instructions, and attribution. The local example uses
 Claude Code's normal permission handling.
 
