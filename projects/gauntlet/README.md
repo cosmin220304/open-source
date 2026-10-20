@@ -18,7 +18,7 @@ The run stops to ask you three times:
 2. After the builders report: does the code look right, and may it run validation and the tests.
 3. With everything green: ship it?
 
-A monitor at http://localhost:7777 shows the runs on this machine as a chat app. Each checkout is one chat. The lead session and every builder are people in it, with a name and an avatar. Their messages appear as bubbles, typing dots show what each one is doing right now, and a pinned line says who works, who needs review, and whose turn it is. The chat list marks unread messages and runs that wait for you. Group info lists the members; open one to see its context against the cap, how it ended (report, stopped, cap hit, compacted), its final report and its recent activity. **Changes** opens the uncommitted diff of the checkout, one file at a time. You still reply in the terminal.
+A monitor at http://localhost:7777 shows the runs on this machine as a chat app. Each checkout is one chat. The lead session and its builders talk in it with names, bubbles and typing dots. **Changes** shows the uncommitted diff of the checkout, one file at a time. You still reply in the terminal.
 
 ## Install
 
