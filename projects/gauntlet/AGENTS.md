@@ -28,7 +28,7 @@ From this directory, run:
 ```sh
 claude plugin validate --strict .
 claude plugin validate --strict .claude-plugin/plugin.json
-python3 -m py_compile hooks/context-cap.py skills/run/watch.py channel/chat.py
+python3 -m py_compile hooks/context-cap.py skills/run/watch.py
 ```
 
 Validate the repository root if its marketplace entry changes. Test plugin
