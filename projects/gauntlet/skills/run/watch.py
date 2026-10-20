@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Local live view of Claude Code work: worktree -> session -> tasks. Reads ~/.claude transcripts, serves http://localhost:7777."""
-import glob, json, os, re, subprocess, sys, time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import glob, json, os, re, secrets, shlex, subprocess, sys, threading, time, uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 HOME = os.path.expanduser("~")
 ROOT = f"{HOME}/.claude/projects"
 JOBS = f"{HOME}/.claude/jobs"
 RUNS = f"{HOME}/.claude/gauntlet/runs"
+TOKEN_PATH = f"{HOME}/.claude/gauntlet/token"
 CAP = int(os.environ.get("GAUNTLET_CONTEXT_CAP", "300000"))
-PORT = 7777
+PORT = int(os.environ.get("GAUNTLET_PORT", "7777"))
 WINDOW = 24 * 3600
 STATUS_RE = re.compile(r"^(?:Status|Verdict):\s*([A-Z]+)", re.M)
 
@@ -24,6 +25,7 @@ PATH_RE = re.compile(r"(?<!\w)(?:~|/)[\w.@+-]+(?:/[\w.@+-]+){2,}")
 NOISE_RE = re.compile(r"[`*_#>|]+")
 CODE_RE = re.compile(r"^\s*\(?(?:WITH|SELECT|FROM|WHERE|JOIN|AND|OR|ON|GROUP|ORDER|LIMIT|CASE|WHEN|THEN|ELSE|END|INSERT|UPDATE|DELETE|CREATE|import|export|const|def|class|function|\{|\[|<|```|--|//|#)\b|\bAS\b|[{}();]{2,}|'\{|::|->|=>|@>|jsonb_", re.I)
 TAG_RE = re.compile(r"<([a-zA-Z][\w-]*)[^>]*>[\s\S]*?</\1>")
+CHANNEL_RE = re.compile(r"<channel source=\"[^\"]*gauntlet[^\"]*\"[^>]*>([\s\S]*?)</channel>")
 CMD_RE = re.compile(r"<command-name>(.*?)</command-name>(?:[\s\S]*?<command-args>(.*?)</command-args>)?", re.S)
 
 
@@ -281,11 +283,71 @@ def read_text_git(cwd, path):
     return b.decode("utf-8", "replace")
 
 
-def register(sid, cwd, name=""):
+def register(sid, cwd, name="", launched=False):
     os.makedirs(RUNS, exist_ok=True)
     path = f"{RUNS}/{sid}.json"
     old = json.load(open(path)) if os.path.exists(path) else {}
-    json.dump({"session": sid, "cwd": os.path.abspath(cwd), "name": name or old.get("name", ""), "at": old.get("at") or time.time()}, open(path, "w"))
+    json.dump({"session": sid, "cwd": os.path.abspath(cwd), "name": name or old.get("name", ""), "at": old.get("at") or time.time(),
+               "launched": launched or old.get("launched", False)}, open(path, "w"))
+
+
+# Chat channel: what the page sends waits here until the session's channel server polls for it.
+INBOX, POLLED, ASKS = {}, {}, {}
+LOCK = threading.Condition()
+
+
+def token():
+    """Per-install secret that guards every write. The page gets it inline; other sites cannot read the page."""
+    try: return open(TOKEN_PATH).read().strip()
+    except OSError: pass
+    os.makedirs(os.path.dirname(TOKEN_PATH), exist_ok=True)
+    fd = os.open(TOKEN_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f: f.write(secrets.token_hex(24))
+    return token()
+
+
+def post(sid, item):
+    with LOCK: INBOX.setdefault(sid, []).append(item); LOCK.notify_all()
+
+
+def take(sid, wait=25):
+    """Long poll for the channel server: block until something is queued for the session, or time out."""
+    end = time.time() + wait
+    with LOCK:
+        POLLED[sid] = time.time()
+        while not INBOX.get(sid) and time.time() < end: LOCK.wait(end - time.time())
+        POLLED[sid] = time.time()
+        return INBOX.pop(sid, [])
+
+
+def channel_spec():
+    """plugin:gauntlet@<marketplace> for the installed copy; GAUNTLET_CHANNEL overrides it."""
+    if os.environ.get("GAUNTLET_CHANNEL"): return os.environ["GAUNTLET_CHANNEL"]
+    try: names = json.load(open(f"{HOME}/.claude/plugins/installed_plugins.json")).get("plugins", {})
+    except (OSError, ValueError): names = {}
+    return next((f"plugin:{k}" for k in names if k.startswith("gauntlet@")), "")
+
+
+def launch(cwd, name=""):
+    """Open a terminal running a new Claude Code session with the chat channel. Returns (session id, error)."""
+    cwd = os.path.abspath(os.path.expanduser(cwd))
+    if not os.path.isdir(cwd): return "", f"no such folder: {short(cwd)}"
+    spec = channel_spec()
+    if not spec: return "", "install the gauntlet plugin first, or set GAUNTLET_CHANNEL"
+    sid = str(uuid.uuid4())
+    cmd = (f"cd {shlex.quote(cwd)} && GAUNTLET_SESSION={sid} MCP_PROTOCOL_NEGOTIATION=legacy "
+           f"claude --session-id {sid} --dangerously-load-development-channels {shlex.quote(spec)}")
+    if sys.platform == "darwin":
+        script = 'tell application "Terminal"\nactivate\ndo script "%s"\nend tell' % cmd.replace("\\", "\\\\").replace('"', '\\"')
+        r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+        if r.returncode: return "", "could not open Terminal: " + r.stderr.strip()[:200]
+    else:
+        # Drop Claude Code's own markers so the new session saves its transcript like any other.
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE_CODE_", "CLAUDECODE"))}
+        try: subprocess.Popen(["x-terminal-emulator", "-e", "bash", "-lc", cmd], env=env)
+        except OSError: return "", "no terminal found; run this yourself: " + cmd
+    register(sid, cwd, name or os.path.basename(cwd), launched=True)
+    return sid, ""
 
 
 CHAT_CACHE = {}
@@ -305,6 +367,8 @@ def said(c):
         if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c): return ""
         c = "\n".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
     if not isinstance(c, str): return ""
+    ch = CHANNEL_RE.search(c)
+    if ch: return ch.group(1).strip()
     cmd = CMD_RE.search(c)
     if cmd: return (cmd.group(1).strip() + " " + " ".join((cmd.group(2) or "").split())).strip()
     return TAG_RE.sub("", c).strip()
@@ -320,7 +384,8 @@ def chat_lines(path, side):
             if '"type":"user"' not in line and '"type":"text"' not in line and '"compact_boundary"' not in line: continue
             try: d = json.loads(line)
             except ValueError: continue
-            if (d.get("isSidechain") and not side) or d.get("isMeta") or d.get("isCompactSummary"): continue
+            # Chat-channel messages are stored as meta lines; they are still what the user typed.
+            if (d.get("isSidechain") and not side) or (d.get("isMeta") and "<channel " not in line) or d.get("isCompactSummary"): continue
             m, iso = d.get("message", {}), d.get("timestamp", "")
             if d.get("type") == "system" and d.get("subtype") == "compact_boundary":
                 out.append({"t": iso, "from": "note", "text": "context compacted · " + compact_event(d)["v"]})
@@ -414,7 +479,11 @@ def snapshot():
             if t["id"] in main["notes"]["turns"] and t["status"] == "ENDED":
                 t["status"] = "NOREPORT"; t["reason"] = f"hit the {main['notes']['turns'][t['id']]}-turn limit, no handoff written"
         branch = git(cwd, "rev-parse", "--abbrev-ref", "HEAD").strip() if os.path.isdir(cwd) else ""
-        sess = {"id": sid, "title": title or sid[:8], "branch": branch, "lead": lead_name(main["model"]), "job": jobs.get(sid), "main": main,
+        # A permission prompt is still open until the transcript moves on after it.
+        moved = os.path.getmtime(path) if path else 0
+        with LOCK: asks = ASKS[sid] = [a for a in ASKS.get(sid, []) if a["at"] > moved - 1 and now - a["at"] < 3600]
+        sess = {"id": sid, "title": title or sid[:8], "branch": branch, "lead": lead_name(main["model"]),
+                "live": now - POLLED.get(sid, 0) < 40, "launched": run.get("launched", False), "asks": asks, "job": jobs.get(sid), "main": main,
                 "tasks": tasks, "running": sum(t["running"] for t in tasks) + (1 if main["running"] else 0),
                 "started": tasks[0]["started"] if tasks else main["ended"], "mtime": mtime}
         repo, wt = worktree_label(cwd)
@@ -453,6 +522,7 @@ body{margin:0;background:var(--side);color:var(--ink);font:14px/1.45 var(--sans)
 ::selection{background:var(--out);color:var(--ink)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}
+[hidden]{display:none!important}
 b{font-weight:600}
 .i{display:inline-flex;flex:none}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
@@ -468,7 +538,7 @@ b{font-weight:600}
 
 /* chat list */
 #list{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--side)}
-.lh{padding:16px 16px 12px;flex:none}
+.lh{display:flex;align-items:center;justify-content:space-between;padding:12px 10px 8px 16px;flex:none}
 .lh h1{font-size:21px;font-weight:700;letter-spacing:-.02em;margin:0}
 #chats{overflow-y:auto;flex:1;min-height:0}
 .row{display:grid;grid-template-columns:46px minmax(0,1fr) auto;column-gap:14px;row-gap:1px;width:100%;padding:11px 16px;align-items:center;position:relative}
@@ -531,6 +601,25 @@ b{font-weight:600}
 .typing .what b{color:var(--ink-2);font-weight:500}
 @keyframes blink{0%,60%,100%{opacity:.35;transform:none}30%{opacity:1;transform:translateY(-2px)}}
 .cmp{flex:none;display:flex;gap:10px;align-items:center;padding:10px 16px;background:var(--head)}
+.cmp form{flex:1;display:flex;gap:8px;align-items:flex-end}
+.cmp textarea{flex:1;resize:none;font:inherit;font-size:14.5px;line-height:1.4;color:var(--ink);background:var(--sel);border:0;border-radius:10px;padding:10px 14px;max-height:160px;caret-color:var(--accent-ink)}
+.cmp textarea::placeholder{color:var(--ink-3)}
+.cmp textarea:focus-visible{outline:none}
+.send{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:#0b141a;flex:none}
+.send:disabled{background:var(--sel);color:var(--ink-3);cursor:default}
+.err{color:var(--bad);font-size:12.5px;padding:0 16px 8px;background:var(--head)}
+.new{display:flex;flex-direction:column;gap:8px;padding:4px 16px 14px;border-bottom:1px solid var(--line)}
+.new input{font:inherit;font-size:13.5px;color:var(--ink);background:var(--head);border:1px solid var(--line-2);border-radius:8px;padding:8px 10px;font-family:var(--mono)}
+.new input:focus-visible{outline:2px solid var(--accent);outline-offset:0}
+.new .r{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-3)}
+.new button{padding:6px 14px;border-radius:999px;background:var(--accent);color:#0b141a;font-weight:600;font-size:13px}
+.new button[type=button]{background:none;color:var(--ink-2);font-weight:400}
+.ask{align-self:flex-start;margin-top:10px;max-width:min(80%,640px);padding:10px 12px;border-radius:8px;background:var(--in);border-left:0;box-shadow:0 1px 1px rgba(0,0,0,.25)}
+.ask .q{font-size:14px;margin-bottom:6px}.ask .q b{color:var(--warn)}
+.ask pre{font-family:var(--mono);font-size:12.5px;background:rgba(0,0,0,.28);padding:8px 10px;border-radius:6px;margin:0 0 10px;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
+.ask .b{display:flex;gap:8px}
+.ask .b button{padding:7px 18px;border-radius:999px;font-weight:600;font-size:13px;background:var(--sel);color:var(--ink)}
+.ask .b [data-allow]{background:var(--accent);color:#0b141a}
 .cmp .box{flex:1;display:flex;gap:10px;align-items:center;padding:10px 14px;border-radius:10px;background:var(--sel);color:var(--ink-3);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cempty{margin:auto;max-width:44ch;text-align:center;color:var(--ink-3);font-size:14px;line-height:1.6;padding:24px}
 /* changes: replaces the conversation while open */
@@ -604,7 +693,7 @@ body.stale #list,body.stale #conv{opacity:.6}
 }
 @media (prefers-reduced-motion:reduce){.dots i{animation:none}}
 </style>
-<aside id=list aria-label="chats"><div class=lh><h1>Gauntlet</h1></div><div id=chats></div></aside>
+<aside id=list aria-label="chats"><div class=lh><h1>Gauntlet</h1><button class=ib data-new aria-label="new chat" title="New chat: opens Claude Code in Terminal"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button></div><form class=new id=newform hidden><input name=cwd placeholder="~/path/to/project" aria-label="folder" autocomplete=off spellcheck=false><span class=r><button>Start</button><button type=button data-new>Cancel</button><span id=newerr></span></span></form><div id=chats></div></aside>
 <section id=conv aria-label="conversation"></section>
 <section id=changes aria-label="changes"></section>
 <div id=status role=status></div>
@@ -613,6 +702,8 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const store={get:(k,d)=>{try{const v=localStorage.getItem(k);return v===null?d:JSON.parse(v)}catch(e){return d}},set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
 let sel=location.hash.slice(1)||null, data=null, diffOpen=false;
+const TOKEN='__TOKEN__';
+const send=(path,body)=>fetch(path,{method:'POST',headers:{'X-Gauntlet-Token':TOKEN,'Content-Type':'application/json'},body:JSON.stringify(body)}).then(async r=>({ok:r.ok,...(await r.json().catch(()=>({})))}));
 let diffMode='split', diffKey=null, diffCache=null, diffCwd='', diffSel='', diffFull=false;
 const inChanges=()=>diffOpen;
 // Test files: test/spec dirs, foo.test.ts / foo_spec.rb / test_foo.py, FooTest.kt / FooTests.swift / foo_test.go.
@@ -655,6 +746,7 @@ const ICON={
   next:'<path d="M6 3.5L10.5 8 6 12.5"/>',
   back:'<path d="M13 8H3M7.5 3.5L3 8l4.5 4.5"/>',
   close:'<path d="M4 4l8 8M12 4l-8 8"/>',
+  send:'<path d="M2 8l11-5.5L9.5 14 7.5 9z"/><path d="M7.5 9L13 2.5"/>',
   diff:'<path d="M4.5 1.75h5l3 3v9.5h-8z"/><path d="M9.5 1.75v3h3M8.5 7v4M6.5 9h4M6.5 12.5h4"/>',
 };
 const ico=(k,s=16)=>`<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
@@ -701,7 +793,10 @@ function renderConv(c){
   const conv=$('#conv');
   if(!c){conv.dataset.sid='';set(conv,`<div class=cempty>Pick a chat. Each chat is one checkout; its lead and builders talk there.</div>`);return;}
   if(conv.dataset.sid!==c.id){conv.dataset.sid=c.id;conv.dataset.k='';
-    conv.innerHTML=`<header class=ch id=chead></header><div id=msgs role=log aria-label="messages"></div><div class=cmp><span class=box>Reply in the terminal. This page only reads.</span></div>`;}
+    conv.innerHTML=`<header class=ch id=chead></header><div id=msgs role=log aria-label="messages"></div><div class=err id=senderr hidden></div><div class=cmp><form id=say hidden><textarea rows=1 name=text placeholder="Message" aria-label="message"></textarea><button class=send aria-label="send">${ico('send',18)}</button></form><span class=box id=hint></span></div>`;}
+  // Typing works only in sessions Gauntlet started, while their chat channel is connected.
+  $('#say').hidden=!c.live; $('#hint').hidden=c.live;
+  $('#hint').textContent=c.launched?'Connecting… confirm the channel prompt in the new Terminal window.':'Started outside Gauntlet: reply in its terminal, or start a new chat with +.';
   const nf=diffCache&&diffCwd===c.cwd&&!diffCache.error?diffCache.files.length:null;
   // Subtitle: who is typing, else the lead's recap, else the members.
   const sub=c.busy.length?`<span class="sub ty">${esc(typing(c))}</span>`:`<span class=sub>${esc(c.main.summary||['You',...c.people.map(p=>p.name)].join(', '))}</span>`;
@@ -729,6 +824,8 @@ function paintMsgs(){
     h+=`<div class="m ${m.from==='you'?'me':''} ${first?'first':''}"><div class="bub ${long?'long':''} ${opened.has(id)?'open':''}">${from}<span class=body>${md(m.text)}</span>${long?`<button class=more data-more="${esc(id)}">${opened.has(id)?'Show less':'Read more'}</button>`:''}<span class=tt>${hhmm(m.t)}</span></div></div>`;
   }
   if(!ch.messages.length) h+=`<div class=cempty>No messages yet.</div>`;
+  const c=current();
+  for(const a of (c&&c.id===ch.id?c.asks:[])) h+=`<div class=ask><div class=q><b>Permission</b> · ${esc(a.tool_name)}${a.description?' · '+esc(a.description):''}</div>${a.input_preview?`<pre>${esc(a.input_preview)}</pre>`:''}<div class=b><button data-allow="${esc(a.request_id)}">Allow</button><button data-deny="${esc(a.request_id)}">Deny</button></div></div>`;
   for(const m of ch.members) if(m.running) h+=`<div class=typing><div class=bub><span class=dots><i></i><i></i><i></i></span><span class=what><b>${esc(m.name)}</b>${m.doing?' · '+esc(m.doing):''}</span></div></div>`;
   if(box.dataset.k===h)return;
   const stick=!box.dataset.k||box.dataset.sid!==ch.id||box.scrollHeight-box.scrollTop-box.clientHeight<90, top=box.scrollTop;
@@ -817,6 +914,8 @@ function paintDiff(){
 document.addEventListener('click',e=>{
   const t=e.target;
   const row=t.closest('.row[data-id]'); if(row){pick(row.dataset.id);return;}
+  if(t.closest('[data-new]')){const f=$('#newform');f.hidden=!f.hidden;$('#newerr').textContent='';if(!f.hidden){const c=current();f.cwd.value=f.cwd.value||(c?c.cwd:'');f.cwd.focus();}return;}
+  const al=t.closest('[data-allow],[data-deny]'); if(al){al.parentNode.querySelectorAll('button').forEach(b=>b.disabled=true);send('/send',{session:sel,request_id:al.dataset.allow||al.dataset.deny,behavior:al.dataset.allow?'allow':'deny'}).then(tick);return;}
   if(t.closest('[data-back]')){history.replaceState(null,'',location.pathname);render();return;}
   if(t.closest('[data-diff]')){diffOpen=!diffOpen;render();return;}
   const mo=t.closest('[data-more]'); if(mo){opened.has(mo.dataset.more)?opened.delete(mo.dataset.more):opened.add(mo.dataset.more);paintMsgs();return;}
@@ -825,6 +924,19 @@ document.addEventListener('click',e=>{
   if(t.closest('.chg-head [data-tests]')){hideTests=!hideTests;store.set('hideTests',hideTests);paintDiff();return;}
   const fb=t.closest('#flist [data-file]'); if(fb){diffSel=fb.dataset.file;paintDiff();return;}
 });
+document.addEventListener('submit',async e=>{
+  e.preventDefault();
+  if(e.target.id==='newform'){const f=e.target,r=await send('/launch',{cwd:f.cwd.value.trim()});
+    if(!r.ok){$('#newerr').textContent=r.error||'could not start';return;}
+    f.hidden=true;f.cwd.value='';await tick();pick(r.session);return;}
+  if(e.target.id==='say'){const ta=e.target.text,text=ta.value.trim(),err=$('#senderr');if(!text)return;
+    const r=await send('/send',{session:sel,text});
+    err.hidden=r.ok;err.textContent=r.ok?'':'Not sent. The monitor refused the message; reload the page.';
+    if(r.ok){ta.value='';ta.style.height='';}}
+});
+// Enter sends, Shift+Enter adds a line; the box grows with its text.
+document.addEventListener('keydown',e=>{if(e.target.matches('#say textarea')&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();e.target.form.requestSubmit();}});
+document.addEventListener('input',e=>{if(e.target.matches('#say textarea')){e.target.style.height='';e.target.style.height=e.target.scrollHeight+'px';}});
 document.addEventListener('change',e=>{if(e.target.matches('#dv [data-read]'))toggleRead(shown().find(x=>x.path===diffSel));});
 document.addEventListener('keydown',e=>{
   if(e.target.closest('input,textarea')||!diffOpen)return;
@@ -847,23 +959,49 @@ setTimeout(()=>{const c=current();if(c&&!diffCwd){diffCwd=c.cwd;loadDiff();}},30
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
-    def do_GET(self):
-        u = urlparse(self.path)
-        if u.path == "/api":
-            body = json.dumps(snapshot()).encode(); ctype = "application/json"
-        elif u.path == "/chat":
-            body = json.dumps(chat(parse_qs(u.query).get("id", [""])[0])).encode(); ctype = "application/json"
-        elif u.path == "/diff":
-            body = json.dumps(changes(parse_qs(u.query).get("cwd", [""])[0])).encode(); ctype = "application/json"
-        else:
-            body = PAGE.encode(); ctype = "text/html; charset=utf-8"
-        self.send_response(200); self.send_header("Content-Type", ctype)
+
+    def reply(self, code, body=b"", ctype="application/json"):
+        self.send_response(code); self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
 
+    def allowed(self, write):
+        """Only requests addressed to this machine (stops DNS rebinding); writes also need the token."""
+        if self.headers.get("Host") not in (f"localhost:{PORT}", f"127.0.0.1:{PORT}"): return False
+        return not write or secrets.compare_digest(self.headers.get("X-Gauntlet-Token", ""), token())
+
+    def do_GET(self):
+        u = urlparse(self.path); q = parse_qs(u.query)
+        if not self.allowed(u.path.startswith("/channel/")): return self.reply(403)
+        if u.path == "/api": body = snapshot()
+        elif u.path == "/chat": body = chat(q.get("id", [""])[0])
+        elif u.path == "/diff": body = changes(q.get("cwd", [""])[0])
+        elif u.path == "/channel/inbox": body = take(q.get("session", [""])[0])
+        else: return self.reply(200, PAGE.replace("__TOKEN__", token()).encode(), "text/html; charset=utf-8")
+        self.reply(200, json.dumps(body).encode())
+
+    # The custom token header also forces a CORS preflight, which this server never answers.
+    def do_POST(self):
+        if not self.allowed(True): return self.reply(403)
+        try: d = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        except ValueError: return self.reply(400)
+        path, sid = urlparse(self.path).path, d.get("session", "")
+        if path == "/send" and sid and d.get("request_id") and d.get("behavior") in ("allow", "deny"):
+            with LOCK: ASKS[sid] = [a for a in ASKS.get(sid, []) if a["request_id"] != d["request_id"]]
+            post(sid, {"kind": "permission", "request_id": d["request_id"], "behavior": d["behavior"]})
+        elif path == "/send" and sid and str(d.get("text", "")).strip():
+            post(sid, {"kind": "message", "text": str(d["text"])[:20000]})
+        elif path == "/channel/permission" and sid and d.get("request_id"):
+            with LOCK: ASKS.setdefault(sid, []).append({k: str(d.get(k, ""))[:4000] for k in ("request_id", "tool_name", "description", "input_preview")} | {"at": time.time()})
+        elif path == "/launch":
+            new, err = launch(str(d.get("cwd", "")), str(d.get("name", ""))[:60])
+            return self.reply(200 if new else 400, json.dumps({"session": new, "error": err}).encode())
+        else: return self.reply(404)
+        self.reply(200, b"{}")
 
 
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--register"]:
         register(sys.argv[2], sys.argv[3], " ".join(sys.argv[4:])); sys.exit(0)
     print(f"gauntlet watch on http://localhost:{PORT}")
-    HTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    token()
+    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()

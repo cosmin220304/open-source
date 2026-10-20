@@ -56,8 +56,24 @@ The first run starts the monitor if nothing is listening on port 7777 and regist
 
 If the monitor is not up, or you want this session diffed against another checkout, run `/gauntlet:monitor` or `/gauntlet:monitor /path/to/worktree`. It starts the monitor if needed, registers the session, and opens the page.
 
+### Talk to a session from the chat
+
+Sessions you start from the monitor accept messages from the chat. Click **+**, enter a project folder, and press **Start**. Gauntlet opens Terminal (macOS) or `x-terminal-emulator` (Linux) with:
+
+```sh
+claude --session-id <new id> --dangerously-load-development-channels plugin:gauntlet@<marketplace>
+```
+
+Confirm the development-channel prompt in that window once. The chat then gets a message box. A message wakes the session even when it waits at the prompt, and Claude's answer appears in the chat. Permission prompts from that session also appear in the chat with **Allow** and **Deny**; the first answer, in the chat or in the terminal, wins.
+
+This uses Claude Code [channels](https://code.claude.com/docs/en/channels), a research preview. It needs a claude.ai or Console login, and on Team and Enterprise plans an admin must turn channels on. The plugin is not on the approved channel list, so it loads with the development flag. Sessions started any other way stay read-only in the chat: answer them in their terminal.
+
+The channel is the `gauntlet-chat` MCP server in `channel/chat.py`. It does nothing in sessions the monitor did not start. Writes to the monitor need a per-install secret in `~/.claude/gauntlet/token`, and the monitor only answers requests addressed to `localhost` or `127.0.0.1`, so other websites cannot send prompts or approvals to your sessions. Any program running as you can read that token, the same as your transcripts.
+
 ## Knobs
 
+- `GAUNTLET_PORT` (default `7777`): the monitor port, read by the monitor and the channel.
+- `GAUNTLET_CHANNEL`: the `--dangerously-load-development-channels` value for new chats, if not `plugin:gauntlet@<installed marketplace>`.
 - `GAUNTLET_CONTEXT_CAP` (default `300000`): the builder context cap, read by the hook and the monitor.
 - `agents/gauntlet-builder.md`: the builder's model, turn limit, and working rules.
 - `commands/ship-it.md`: how a run becomes a PR. Edit the commit and PR conventions there.
@@ -71,6 +87,8 @@ The plugin ships a "Simple language" output style and forces it on while the plu
 ```
 skills/run/SKILL.md     the orchestration playbook Fable follows
 skills/run/watch.py     the monitor, one stdlib Python file
+channel/chat.py         chat channel: carries chat messages and approvals into a session
+.mcp.json               registers the channel as the gauntlet-chat MCP server
 agents/gauntlet-builder.md
 commands/ship-it.md
 commands/monitor.md     start the monitor, register this session, open the page
@@ -88,7 +106,7 @@ dependencies to install and no application build. From the repository root:
 cd projects/gauntlet
 claude plugin validate --strict .
 claude plugin validate --strict .claude-plugin/plugin.json
-python3 -m py_compile hooks/context-cap.py skills/run/watch.py
+python3 -m py_compile hooks/context-cap.py skills/run/watch.py channel/chat.py
 ```
 
 Both validation commands should report `Validation passed`. Python compilation
@@ -108,7 +126,8 @@ validate the repository-root marketplace. Keep this project's runtime files here
 Copied from [cosmin220304/gauntlet](https://github.com/cosmin220304/gauntlet) at
 commit [`1f5c5e9`](https://github.com/cosmin220304/gauntlet/commit/1f5c5e99b4e6fd6825a91f4cdeb9440387837ba4),
 version `0.1.26`. This copy moves builders to Opus 5.5 with a 300k context cap and adds
-a chat-style monitor (version `0.1.27`). This README adapts installation paths and adds project
+a chat-style monitor (version `0.1.27`), and a chat channel to talk to sessions the
+monitor starts (version `0.1.28`). This README adapts installation paths and adds project
 metadata, development instructions, and attribution. The local example uses
 Claude Code's normal permission handling.
 
