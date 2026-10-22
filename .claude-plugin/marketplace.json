@@ -11,7 +11,7 @@
     {
       "name": "gauntlet",
       "source": "./projects/gauntlet",
-      "description": "Fable as product owner, Opus 4.6 builders under a hard context cap, a live monitor with a git diff view, and three user gates: before dispatch, before tests, before shipping.",
+      "description": "Fable as product owner, Opus 5.5 builders under a hard context cap, a live monitor with a git diff view, and three user gates: before dispatch, before tests, before shipping.",
       "version": "0.1.29",
       "author": {
         "name": "Cosmin Aftanase"
