@@ -21,9 +21,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/run/watch.py" --register "$CLAUDE_CODE_SES
 
 The monitor lists registered runs only and shows the uncommitted diff of the registered checkout. If you create or enter a worktree for this run, register again with the worktree path; the name is kept. Tell the user the monitor is at http://localhost:7777.
 
+Then read the rules the user taught earlier runs: `~/.claude/gauntlet/rules.md` (their personal taste, for every repo) and the `## Gauntlet rules` section of the project's `AGENTS.md` (facts about this project). Either may not exist yet. These rules shape every plan, brief and builder prompt in this run. See "Learning rules" below.
+
 ## 1. Understand, then ask (gate 1)
 
-Read the spec and enough of the codebase to judge whether the requested behaviour makes sense. Tell the user in a few lines what you understood: the goal in your own words and what is in and out of scope. Ask a question only when the answer changes what gets built; product ambiguities, not implementation choices. If nothing is ambiguous, say so. Wait for go. Do not write the brief or spawn a builder before that.
+Read the spec and enough of the codebase to judge whether the requested behaviour makes sense. Tell the user in a few lines what you understood. Rewrite the request in your own words: do not echo their phrasing back. Say the goal, what is in and out of scope, and which of their rules shape the plan. Ask a question only when the answer changes what gets built; product ambiguities, not implementation choices. If nothing is ambiguous, say so. Wait for go. Do not write the brief or spawn a builder before that.
 
 ## 2. Brief
 
@@ -33,6 +35,7 @@ Write the confirmed understanding into the brief to the repo's plans directory i
 - Scope: what is in, what is explicitly out.
 - Acceptance: how we know it is done. Observable behaviour, not implementation.
 - Fixed contracts: external APIs, names other systems already depend on, behaviour that must not change. Nothing else. No file lists, no class names, no patterns to follow, no steps. The builder finds those in the code.
+- Rules: the user's rules that apply to this feature, each with its reason.
 - Verification commands for this repo: formatter, compile or typecheck, single test invocation, full suite. Look them up once.
 - Slices: see below.
 
@@ -48,7 +51,17 @@ Builders write their own tests as part of the slice. Do not list tests as separa
 
 ## 4. Dispatch
 
-Spawn one `gauntlet-builder` per slice with the brief, its slice, and the verification commands. Nothing more: no suggested approach, no files to touch, no order of steps. Slices with disjoint boundaries run in parallel; slices that depend on another's output run after it. Always spawn a fresh builder per attempt; never continue an old one.
+Spawn one `gauntlet-builder` per slice. Write its prompt yourself, in your own words, for a Claude reader: never paste the user's message as the instruction. The builder knows only what the prompt says and what it finds in the code, so give it:
+
+- The goal of the feature and why the user wants it.
+- Its slice: what it delivers and the area it owns.
+- Context it cannot find in the code: who uses this, what the user cares about, decisions taken at gate 1.
+- Every constraint with its reason, so it can judge cases you did not foresee. Say what to do, not only what to avoid.
+- The user's rules that apply, with their reasons.
+- What done looks like: the acceptance for this slice and the contracts with sibling slices.
+- The verification commands, and the path to the brief.
+
+Nothing more: no suggested approach, no files to touch, no order of steps. Slices with disjoint boundaries run in parallel; slices that depend on another's output run after it. Always spawn a fresh builder per attempt; never continue an old one.
 
 On each report:
 
@@ -61,11 +74,23 @@ On each report:
 
 When every slice is done or stopped, show the user the result before anything runs: what each slice delivered, the files changed, the tests added and what they cover, anything you sent back and why, anything stopped and why, and the token count per builder. Then list exactly what you intend to run: the verification commands, the test invocations, and anything that touches a sandbox or an external system. Ask two things: does the code look right, and may I run validation and the tests now. Wait.
 
-Fixes they ask for are new slices: update the brief, spawn a builder with the feedback, review, and come back to this gate. When they say run, run everything yourself and paste the outcomes. A builder's report of green tests is not evidence; it did not run them. If something fails, fix the cause through a builder slice or a one-line seam fix of your own, rerun, and show the new outcome.
+Fixes they ask for are new slices: update the brief, spawn a builder with the feedback, review, and come back to this gate. If a fix shows a lasting preference, save it as a rule too. When they say run, run everything yourself and paste the outcomes. A builder's report of green tests is not evidence; it did not run them. If something fails, fix the cause through a builder slice or a one-line seam fix of your own, rerun, and show the new outcome.
 
 ## 6. Ship, then ask (gate 3)
 
 With verification green, report the real numbers and ask: ship it? On yes, invoke the `gauntlet:ship-it` command as written (branch if on the default branch, concise commit, push, PR) and paste the PR URL. On no, leave the work uncommitted in the worktree and list what is still open. Never commit or push before this gate.
+
+## Learning rules
+
+When the user corrects you or rejects something ("do not do X", "I do not like Y, do Z"), at a gate or at any other time, ask yourself: will this matter in the next run too? If yes, save it as a rule. A decision that only applies to this feature goes in the brief, not in a rule.
+
+- Personal taste, true in any repo (code style, how much to test, how to talk to them): append to `~/.claude/gauntlet/rules.md`.
+- A fact about this project (its conventions, tools, areas not to touch): append to the `## Gauntlet rules` section of the project's `AGENTS.md`. Create the section, or the file, if needed. Leave the edit uncommitted.
+- Write one line in the form `- <what to do>. Why: <the reason they gave>.` Use their reason, not one you invent.
+- If a rule already covers it, update that rule. If the user reverses a rule, delete it.
+- Then tell the user in one line what you saved and where. If they say undo, remove it.
+
+Apply the new rule from that moment: to the plan, to slices still to dispatch, and to builders you respawn.
 
 ## Rules
 
