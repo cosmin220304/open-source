@@ -1,7 +1,7 @@
 # Gauntlet
 
 Gauntlet is an independent Claude Code plugin copied from
-`cosmin220304/gauntlet`. Its author is Cosmin Aftanase. Read the README's origin and
+`cosmin220304/gauntlet`. Read the README's origin and
 licensing status before changing attribution or distributing a modified version.
 
 ## Boundaries
@@ -17,9 +17,8 @@ licensing status before changing attribution or distributing a modified version.
   introduce paths to sibling projects or a developer's checkout.
 - The Python scripts use the standard library. Keep any future dependencies local
   to this project and document them.
-- Upstream has no declared license at the imported revision. `LICENSE` records the
-  status; it does not grant a license. Do not substitute another project's license
-  or invent a license declaration.
+- Gauntlet is MIT licensed, copyright Light. Keep `LICENSE` and the README license
+  row in sync.
 
 ## Verification
 

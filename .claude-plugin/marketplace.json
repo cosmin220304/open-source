@@ -14,9 +14,10 @@
       "description": "Fable as product owner, Opus 5.5 builders under a hard context cap, a live monitor with a git diff view, and three user gates: before dispatch, before tests, before shipping.",
       "version": "0.1.30",
       "author": {
-        "name": "Cosmin Aftanase"
+        "name": "Light"
       },
-      "repository": "https://github.com/cosmin220304/gauntlet"
+      "repository": "https://github.com/light-space/open-source",
+      "license": "MIT"
     },
     {
       "name": "light-mcp",

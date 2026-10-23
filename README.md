@@ -25,7 +25,7 @@ Explore a project, build something useful, or contribute one of your own.
     <td width="50%" valign="top">
       <h3><a href="projects/gauntlet/">Gauntlet</a></h3>
       <p>Plan a feature, coordinate Claude Code builders, and review their progress in a local monitor.</p>
-      <p><sub>Claude Code plugin · Experimental</sub></p>
+      <p><sub>Claude Code plugin · MIT · Experimental</sub></p>
       <a href="projects/gauntlet/">Explore the project →</a>
     </td>
   </tr>

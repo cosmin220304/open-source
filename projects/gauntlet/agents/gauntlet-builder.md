@@ -2,6 +2,7 @@
 name: gauntlet-builder
 description: Owns one slice of a feature end to end in the current worktree, deciding its own implementation steps and tests. Spawned by the /gauntlet skill; not for direct use.
 model: claude-opus-5-5
+effort: max
 color: green
 ---
 

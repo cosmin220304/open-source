@@ -4,11 +4,10 @@ Fable plans and reviews. Opus 5.5 builds. You decide at three gates.
 
 | | |
 | --- | --- |
-| Author | [Cosmin Aftanase](https://github.com/cosmin220304) |
-| Maintainer of this copy | [Light](https://github.com/light-space) |
+| Maintainer | [Light](https://github.com/light-space) |
 | Status | Experimental |
 | Language | Python / Markdown |
-| License | [Not specified upstream](LICENSE) |
+| License | [MIT](LICENSE) |
 
 `/gauntlet:run <spec or ticket>` turns Fable into the product owner for one feature in the current worktree. It writes a brief that says what and why, splits the work only where a second engineer could take a part without stepping on the first, and spawns one `gauntlet-builder` per slice. Builders run on `claude-opus-5-5`. They explore the code, choose their own files, names and steps, write their own tests, and never run them. Fable never tells a builder how to build. A hook stops any builder that crosses 300k tokens of context and makes it hand off. Fable checks every diff for business sense, runs the tests itself, and ships through `/gauntlet:ship-it`.
 
@@ -117,12 +116,14 @@ validate the repository-root marketplace. Keep this project's runtime files here
 ## Origin and license
 
 Copied from [cosmin220304/gauntlet](https://github.com/cosmin220304/gauntlet) at
-commit [`1f5c5e9`](https://github.com/cosmin220304/gauntlet/commit/1f5c5e99b4e6fd6825a91f4cdeb9440387837ba4),
-version `0.1.26`. The plugin manifests, agents, commands, hooks, skills, and output
+commit [`63355be`](https://github.com/cosmin220304/gauntlet/commit/63355beba70795e1d2f66e8293659f1fb82de173),
+version `0.1.27`. The plugin manifests, agents, commands, hooks, skills, and output
 style are copied unchanged. This README adapts installation paths and adds project
 metadata, development instructions, and attribution. The local example uses
 Claude Code's normal permission handling.
 
-Upstream did not include a license file or a license declaration at this commit.
-The [licensing status file](LICENSE) records that fact; this copy does not assign a
-new license. Light MCP's MIT license applies to Light MCP only.
+The upstream repository was archived on 2026-09-14. This directory is now the
+canonical source of Gauntlet; further changes land here, not upstream.
+
+Licensed under the [MIT License](LICENSE), copyright Light. The upstream repository
+carried no license; the author assigned this one on import.

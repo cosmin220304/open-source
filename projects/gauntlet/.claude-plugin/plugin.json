@@ -4,6 +4,6 @@
   "version": "0.1.30",
   "description": "Fable as product owner, Opus 5.5 builders under a hard context cap, a live monitor with a git diff view, and three user gates: before dispatch, before tests, before shipping.",
   "author": {
-    "name": "Cosmin Aftanase"
+    "name": "Light"
   }
 }
