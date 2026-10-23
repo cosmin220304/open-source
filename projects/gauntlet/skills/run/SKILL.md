@@ -90,6 +90,8 @@ When the user corrects you or rejects something ("do not do X", "I do not like Y
 - If a rule already covers it, update that rule. If the user reverses a rule, delete it.
 - Then tell the user in one line what you saved and where. If they say undo, remove it.
 
+The repo wins over a personal rule. When a personal rule clashes with the repo's rules or patterns, you see it while planning or a builder lists it under Rule conflicts. Builders follow the repo. Show each clash at the next gate. Ask the user to choose: update the repo's rules, or narrow or drop the personal rule. Then apply their answer as a rule change.
+
 Apply the new rule from that moment: to the plan, to slices still to dispatch, and to builders you respawn.
 
 ## Rules

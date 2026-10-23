@@ -61,6 +61,8 @@ Correct Gauntlet once ("do not do X, do Y") and it keeps the lesson for later ru
 
 Every run reads both before gate 1. Fable plans with them and passes the related rules, with their reasons, to each builder. Edit either file by hand at any time.
 
+If one of your personal rules clashes with the repo's rules or patterns, the repo wins. Builders follow the repo, and Fable asks you at the next gate: update the repo's rules, or change your rule?
+
 The first run starts the monitor if nothing is listening on port 7777 and registers the session with its checkout; open http://localhost:7777. It shows the latest registered run of each checkout, grouped by checkout, and diffs that checkout, so a run started on main that moves into a worktree shows that worktree. It reads local transcripts under `~/.claude/projects` and sends nothing anywhere. The Changes tab loads its diff viewer from a CDN, so it needs internet access in the browser.
 
 If the monitor is not up, or you want this session diffed against another checkout, run `/gauntlet:monitor` or `/gauntlet:monitor /path/to/worktree`. It starts the monitor if needed, registers the session, and opens the page.
